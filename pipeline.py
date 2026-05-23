@@ -4,8 +4,8 @@
 """
 Pipeline de détection de Frustrations Reddit Multilingue (EN/FR/ES)
 ------------------------------------------------------------------
-Rôle: Scraper Reddit, pré-filtrer localement sans API, réguler les appels
-      Gemini, gérer les quotas (429) et stocker les opportunités validées.
+Rôle: Scraper Reddit via RSS, pré-filtrer localement la friction (SaaS & Physique),
+      réguler les quotas d'IA, valider sémantiquement, puis stocker les opportunités.
 """
 
 import os
@@ -50,8 +50,8 @@ def load_config():
         with open("config.json", "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "subreddits": ["productivity", "france"],
-        "trigger_keywords": ["alternative", "manuellement", "marre"],
+        "subreddits": ["productivity", "EDC", "france"],
+        "trigger_keywords": ["alternative", "manuellement", "encombrant"],
         "min_soi_threshold": 75,
         "optimization": {
           "max_queries_per_minute": 12,
@@ -80,31 +80,45 @@ def save_database(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 # =====================================================================
-# ALGORITHME DE PRÉ-FILTRAGE LOCAL (ZÉRO APPEL API)
+# ALGORITHME DE PRÉ-FILTRAGE LOCAL ÉQUITABLE (ZÉRO APPEL API)
 # =====================================================================
 
 def calculate_local_frustration_score(title, content):
     """
     Analyse le post localement et lui attribue une note de friction.
-    Évite d'envoyer à Gemini des posts qui n'expriment pas de réelle frustration.
+    Équilibre le score pour cibler AUSSI BIEN les frustrations logicielles que matérielles.
     """
     score = 0
     text_lower = f"{title} {content}".lower()
     
-    # Matrice de poids pour cibler la forte intention de friction
+    # Matrice de poids multilingue et multi-catégorielle
     keyword_weights = {
-        # Anglais (Poids fort à modéré)
+        # --- BLOC LOGICIEL / AUTOMATISATION ---
+        # Anglais
         "alternative to": 15, "why is there no": 15, "is there an app": 10,
-        "manually": 20, "hate doing this": 25, "annoying": 15, "workaround": 15,
-        "waste of time": 20, "how to automate": 15, "frustrated": 15,
-        # Français (Poids fort à modéré)
+        "manually": 20, "hate doing this": 25, "workaround": 15, "waste of time": 20,
+        "how to automate": 15,
+        # Français
         "alternative à": 15, "pourquoi personne": 15, "existe-t-il une": 10,
-        "manuellement": 20, "marre de": 25, "chiant": 15, "galère": 15,
-        "perte de temps": 20, "comment automatiser": 15, "frustré": 15,
-        # Espagnol (Poids fort à modéré)
+        "manuellement": 20, "marre de": 25, "galère": 15, "perte de temps": 20,
+        "comment automatiser": 15,
+        # Espagnol
         "alternativa a": 15, "por qué nadie": 15, "existe alguna": 10,
-        "manualmente": 20, "harto de": 25, "molesto": 15, "truco para": 15,
-        "pérdida de tiempo": 20, "cómo automatizar": 15, "frustrado": 15
+        "manualmente": 20, "harto de": 25, "pérdida de tiempo": 20,
+        "cómo automatizar": 15,
+
+        # --- BLOC MATÉRIEL / GADGETS / VIE QUOTIDIENNE ---
+        # Anglais
+        "tangled": 25, "bulky": 20, "heavy": 15, "broken": 15, "shattered": 20,
+        "spilled": 20, "cumbersome": 25, "takes too much space": 20, "cluttered": 15,
+        "scratched": 15, "hard to clean": 20, "lost my": 15, "messy": 15,
+        # Français
+        "s'emmêle": 25, "encombrant": 20, "lourd": 15, "cassé": 15, "prend trop de place": 20,
+        "dur à nettoyer": 20, "perdu mes": 15, "renversé": 20, "galère à ranger": 20,
+        "rayé": 15, "salissant": 15, "fragile": 15,
+        # Espagnol
+        "incómodo": 20, "pesado": 15, "se rompió": 15, "ocupa mucho espacio": 20,
+        "difícil de limpiar": 20, "enredado": 25, "perdí mi": 15, "manchado": 15
     }
     
     # Évaluation de la présence des mots-clés
@@ -185,11 +199,11 @@ def evaluate_post_with_ai_retry(title, content, subreddit, url, opt_config):
             },
             "resolution_ease": {
                 "type": "INTEGER",
-                "description": "Note de 1 à 10 de la facilité à concevoir un MVP simple."
+                "description": "Note de 1 à 10 de la facilité à concevoir un MVP simple (ex: pour un objet physique, un prototype imprimable en 3D, découpable au laser ou cousu)."
             },
             "accessibility": {
                 "type": "INTEGER",
-                "description": "Note de 1 à 10 de la facilité à distribuer le produit dans ce canal."
+                "description": "Note de 1 à 10 de la facilité à distribuer le produit dans ce canal ou cette communauté."
             },
             "summary_fr": {
                 "type": "STRING",
