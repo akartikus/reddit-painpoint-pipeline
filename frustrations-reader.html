@@ -190,6 +190,14 @@
                 </p>
             </div>
 
+            <!-- Proposed Solution (Concretized MVP direction) -->
+            <div class="space-y-1.5">
+                <h4 class="text-[8px] font-bold text-emerald-600 uppercase tracking-widest">Début de solution (Idée MVP)</h4>
+                <p id="drawerSolution" class="text-[11px] text-emerald-800 leading-relaxed bg-emerald-50/50 p-3 rounded-lg border border-emerald-100/60 font-medium">
+                    Chargement...
+                </p>
+            </div>
+
             <!-- Reddit Original Quote -->
             <div class="space-y-1.5">
                 <h4 class="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">Frustration brute</h4>
@@ -447,6 +455,10 @@
             document.getElementById('drawerCategory').innerText = item.category;
             document.getElementById('drawerTitle').innerText = item.title;
             document.getElementById('drawerContext').innerText = item.context || "Aucune description disponible.";
+            
+            // Remplissage de l'idée de solution générée
+            document.getElementById('drawerSolution').innerText = item.proposedSolution || "Pas de piste de solution disponible pour cette entrée ancienne.";
+            
             document.getElementById('drawerQuote').innerText = item.rawQuote ? `"${item.rawQuote}"` : "Aucune citation brute disponible.";
             
             document.getElementById('drawerGravityValue').innerText = `${item.gravity}/10`;

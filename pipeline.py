@@ -33,7 +33,7 @@ load_dotenv()
 class FrustrationAnalysis(BaseModel):
     """Schéma de validation strict pour l'IA (Structured Output)."""
     is_valid_pain: bool = Field(
-        description="True si le texte exprime une frustration exploitable pour créer un produit ou service. False sinon."
+        description="True si le texte exprime une frustration exploitable, réaliste et techniquement/matériellement faisable à résoudre pour un créateur indépendant. False sinon."
     )
     title_fr: str = Field(
         description="Titre du problème traduit ou rédigé de manière concise en français."
@@ -55,6 +55,9 @@ class FrustrationAnalysis(BaseModel):
     )
     summary_fr: str = Field(
         description="Description détaillée de la frustration rédigée en français."
+    )
+    proposed_solution_fr: str = Field(
+        description="Une idée de début de solution (MVP) concrète, réaliste et techniquement/matériellement faisable à bas coût par un solopreneur (ex: extension Chrome, pièce imprimée en 3D, script d'automatisation)."
     )
     target_persona: str = Field(
         description="Profil type de l'utilisateur souffrant du problème (en français)."
@@ -83,7 +86,7 @@ class BaseLLMService(ABC):
 # =====================================================================
 
 class RedditRSSScraper(BaseScraper):
-    """Scraper standard utilisant les flux RSS publics (contourne l'API)."""
+    """Scraper standard utilisant les flux de recherche RSS publics (historique et pertinence)."""
     
     def __init__(self):
         # Utiliser un User-Agent de navigateur classique pour éviter les blocages de sécurité
@@ -95,7 +98,6 @@ class RedditRSSScraper(BaseScraper):
         """Supprime les balises HTML contenues dans les résumés des flux RSS."""
         cleanr = re.compile('<.*?>')
         text = re.sub(cleanr, ' ', raw_html)
-        # Nettoyer les mentions répétitives de l'auteur
         text = re.sub(r'submitted by.*?\s', '', text)
         return " ".join(text.split())
         
@@ -105,22 +107,20 @@ class RedditRSSScraper(BaseScraper):
         keywords = config.get("trigger_keywords", [])
         
         for sub_name in subreddits:
-            try:
-                # Récupération du flux RSS "new" du subreddit
-                url = f"https://www.reddit.com/r/{sub_name}/new.rss"
-                response = requests.get(url, headers=self.headers, timeout=10)
-                
-                if response.status_code == 200:
-                    feed = feedparser.parse(response.text)
-                    print(f"[Scraper] Analyse de r/{sub_name} ({len(feed.entries)} posts trouvés)")
+            # Pour chaque subreddit, on pioche dans l'historique en recherchant directement les mots-clés
+            # Nous trions par 'relevance' sur l'année écoulée pour avoir les meilleurs posts historiques
+            for kw in keywords[:5]: # On limite aux 5 premiers mots-clés par passe pour ne pas saturer Reddit
+                try:
+                    query = requests.utils.quote(kw)
+                    url = f"https://www.reddit.com/r/{sub_name}/search.rss?q={query}&restrict_sr=1&sort=relevance&t=year"
+                    response = requests.get(url, headers=self.headers, timeout=10)
                     
-                    for entry in feed.entries:
-                        content_clean = self._clean_html(entry.get("summary", ""))
-                        text_to_check = (entry.title + " " + content_clean).lower()
-                        has_keyword = any(kw in text_to_check for kw in keywords)
+                    if response.status_code == 200:
+                        feed = feedparser.parse(response.text)
+                        print(f"[Scraper] Recherche r/{sub_name} pour '{kw}' ({len(feed.entries)} posts trouvés)")
                         
-                        if has_keyword:
-                            # Extraction de l'ID du post depuis l'URL (ex: 'comments/18a7b9c/title')
+                        for entry in feed.entries:
+                            content_clean = self._clean_html(entry.get("summary", ""))
                             post_id = entry.link.split("/")[-3] if "comments" in entry.link else entry.id
                             
                             raw_items.append({
@@ -128,17 +128,16 @@ class RedditRSSScraper(BaseScraper):
                                 "raw_id": post_id,
                                 "title": entry.title,
                                 "content": content_clean,
-                                "platform": "Reddit (RSS)",
+                                "platform": "Reddit (RSS Search)",
                                 "source_community": f"r/{sub_name}",
                                 "url": entry.link
                             })
-                else:
-                    print(f"[Scraper] Code {response.status_code} sur r/{sub_name} (Accès bloqué ou subreddit inexistant)")
-            except Exception as e:
-                print(f"[Scraper] Erreur de lecture sur r/{sub_name} : {e}")
-                
-            # Temporisation polie pour éviter de surcharger les serveurs de Reddit
-            time.sleep(1.5)
+                    time.sleep(1.0) # Temporisation polie entre requêtes de mots-clés
+                except Exception as e:
+                    print(f"[Scraper] Erreur de recherche sur r/{sub_name} avec le mot-clé '{kw}' : {e}")
+                    
+            # Temporisation polie entre subreddits
+            time.sleep(2.0)
                 
         return raw_items
 
@@ -150,19 +149,21 @@ class GeminiLLMService(BaseLLMService):
     """Implémentation standard utilisant l'API Gemini."""
     
     def __init__(self, model_name: str):
-        # Initialise le client. Récupère automatiquement GEMINI_API_KEY
         self.client = genai.Client()
         self.model_name = model_name
         
     def evaluate_frustration(self, title: str, content: str, source: str) -> Optional[dict]:
         system_instruction = (
-            "Tu es un agent d'étude de marché multilingue d'élite. Ton but est d'analyser un texte "
-            "et de déterminer s'il exprime une véritable frustration exploitable pour créer un produit "
-            "ou un service (SaaS, physique ou hybride).\n\n"
-            "DIRECTIVE CRUCIALE DE TRADUCTION :\n"
-            "Peu importe la langue d'origine (anglais, espagnol, français), tu devez obligatoirement "
-            "générer les champs 'title_fr' et 'summary_fr' en FRANÇAIS correct et fluide.\n\n"
-            "Si le texte n'exprime pas une frustration claire et exploitable, renvoie is_valid_pain = false."
+            "Tu es un agent d'étude de marché d'élite spécialisé dans le filtrage d'opportunités de business.\n\n"
+            "CRITÈRE DE FAISABILITÉ CRUCIAL :\n"
+            "Tu dois impérativement REJETER (is_valid_pain = false) les problèmes qui sont :\n"
+            "1. Techniquement insolubles (ex: violer les lois de la physique, batteries magiques).\n"
+            "2. Matériellement hors de portée d'un solopreneur ou d'un petit budget (ex: nécessite de lourdes infrastructures physiques, des autorisations gouvernementales, ou de modifier des systèmes d'exploitation verrouillés).\n"
+            "3. De simples expressions de colère passagère sans besoin de produit.\n"
+            "Ne garde que les problèmes réels pour lesquels un produit simple (logiciel, accessoire, outil) peut être développé par une petite équipe.\n\n"
+            "DIRECTIVE DE TRADUCTION & SOLUTION :\n"
+            "Rédige impérativement les champs 'title_fr', 'summary_fr' et 'proposed_solution_fr' en FRANÇAIS.\n"
+            "Dans 'proposed_solution_fr', propose un début de solution concret, réaliste et ingénieux."
         )
         
         prompt = f"""
@@ -179,7 +180,7 @@ class GeminiLLMService(BaseLLMService):
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
                     response_schema=FrustrationAnalysis,
-                    temperature=0.15
+                    temperature=0.1
                 )
             )
             return json.loads(response.text)
@@ -284,6 +285,7 @@ class PipelineController:
                             "accessibility": analysis["accessibility"],
                             "soi": soi_score,
                             "context": analysis["summary_fr"],
+                            "proposedSolution": analysis["proposed_solution_fr"], # Nouveau champ
                             "targetCommunity": post["source_community"],
                             "url": post["url"],
                             "detected_at": datetime.now().strftime('%Y-%m-%d %H:%M')
