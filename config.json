@@ -1,0 +1,54 @@
+{
+  "active_llm_provider": "gemini",
+  "active_llm_model": "gemini-2.5-flash",
+  "min_soi_threshold": 75,
+  "sources": {
+    "reddit_rss": {
+      "subreddits": [
+        "productivity",
+        "bikecommuting",
+        "videoediting",
+        "startups",
+        "solopreneur",
+        "excel",
+        "france",
+        "AskFrance",
+        "pedale",
+        "es",
+        "productividad",
+        "programacion"
+      ],
+      "trigger_keywords": [
+        "alternative to",
+        "how to automate",
+        "manually",
+        "frustrated",
+        "why is there no",
+        "is there an app",
+        "annoying",
+        "hate doing this",
+        "workaround",
+        "alternative à",
+        "comment automatiser",
+        "manuellement",
+        "frustré",
+        "marre de",
+        "pourquoi personne",
+        "existe-t-il une",
+        "chiant",
+        "perte de temps",
+        "galère",
+        "alternativa a",
+        "cómo automatizar",
+        "manualmente",
+        "frustrado",
+        "harto de",
+        "por qué nadie",
+        "existe alguna",
+        "pérdida de tiempo",
+        "truco para",
+        "molesto"
+      ]
+    }
+  }
+}
