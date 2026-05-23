@@ -1,8 +1,8 @@
-# PainPoint AI : Pipeline d'Idéation de Business Automatisé (Quota-Safe & Multilingue)
+# PainPoint AI : Pipeline d'Idéation Reddit
 
-PainPoint AI est un agent autonome d'écoute et d'étude de marché multilingue (FR/EN/ES). Il scanne les subreddits publics via les flux RSS de recherche de Reddit (sans clé API Reddit), pré-filtre localement le bruit pour économiser vos quotas d'IA, valide sémantiquement les frictions réelles avec Google Gemini, puis calcule un score d'opportunité d'idéation ($SOI$) et exporte des fiches de projets prêtes à l'emploi.
+PainPoint AI est un agent autonome d'écoute et d'étude de marché multilingue (FR/EN/ES). Il scanne les subreddits publics via les flux RSS de recherche de Reddit (sans clé API Reddit), pré-filtre localement le bruit pour économiser vos quotas d'IA, valide sémantiquement les frictions réelles avec Google Gemini, puis calcule un score d'opportunité d'idéation ($SOI$) et exporte des fiches de projets prêtes à l'emploi tout en economisant avec l'utilisation optimisé de Gemini.
 
-Cette approche permet de concevoir des projets (Micro-SaaS, objets physiques ou produits hybrides) en partant de frustrations réelles, de besoins déjà exprimés par des utilisateurs existants, avec un canal de distribution intégré.
+Cette approche permet de concevoir des solutions en partant de frustrations réelles, de besoins déjà exprimés par des utilisateurs existants, avec un canal de distribution intégré.
 
  ## 1. Architecture Globale du Pipeline
 
@@ -41,6 +41,7 @@ Le code est conçu de manière modulaire et standardisée (découplée). Le trai
 ## 2. Le Voyage d'une Frustration & Sécurisation des Quotas
 
 Pour éviter de saturer l'API gratuite de Gemini (limite de 15 requêtes/minute), le pipeline implémente un entonnoir de filtrage strict :
+
 <pre>
  [ Étape 1 : Collecte RSS Anonyme ]
    Scan temporel via RSS Search sur les subreddits cibles (r/productivity, r/pedale, r/es...).
@@ -125,7 +126,6 @@ Vous pouvez piloter tout le comportement de l'agent sans modifier le code de cal
   }
 }
 
-
 delay_between_queries_seconds : Temps d'attente forcé entre chaque appel à l'IA (en secondes).
 
 local_prefilter_score_threshold : Seuil minimal de points au pré-filtrage Python pour mériter un appel Gemini.
@@ -151,4 +151,4 @@ Exécutez l'agent autonome :
 python pipeline.py
 
 
-Ouvrez viewer.html et déposez-y votre fichier detected_frustrations.json mis à jour pour analyser graphiquement vos nouvelles idées d'affaires !
+Ouvrez viewer.html et déposez-y votre fichier detected_frustrations.json mis à jour pour analyser graphiquement les frustrations aux probleme ou manquements observés avec les potentiels élenent de réponse.
