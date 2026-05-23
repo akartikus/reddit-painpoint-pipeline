@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="fr" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PainPoint AI - Visionneuse Épurée</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #fafafa; /* Zinc 50 ultra-doux */
+        }
+        /* Custom ultra-thin light scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #fafafa; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #e4e4e7; /* Zinc 200 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #d4d4d8; 
+        }
+    </style>
+</head>
+<body class="text-zinc-800 min-h-screen flex flex-col antialiased">
+
+    <!-- Minimalist Header -->
+    <header class="border-b border-zinc-200/60 bg-white/80 backdrop-blur sticky top-0 z-40 px-6 py-4">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="w-2 h-2 rounded-full bg-zinc-400" id="statusIndicator"></span>
+                <div>
+                    <h1 class="text-xs font-bold tracking-tight text-zinc-900 uppercase">PainPoint AI</h1>
+                    <p class="text-[10px] text-zinc-400 font-medium" id="statusText">Lecteur autonome</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="statusBadge" class="hidden text-[10px] font-medium text-zinc-500 bg-zinc-100 border border-zinc-200/50 px-2 py-0.5 rounded-full">
+                    Données prêtes
+                </div>
+                <button id="resetBtn" class="hidden px-2 py-1 hover:bg-zinc-100 text-zinc-500 hover:text-zinc-800 border border-transparent hover:border-zinc-200/60 rounded-md text-[10px] font-semibold transition" onclick="resetFileSelection()">
+                    Changer
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow max-w-6xl w-full mx-auto p-4 md:p-8 flex flex-col">
+
+        <!-- 1. Drag & Drop Zone (Pure, light style) -->
+        <div id="uploadZone" class="flex-grow flex flex-col items-center justify-center border border-dashed border-zinc-200 bg-white rounded-2xl p-8 md:p-16 text-center transition hover:border-zinc-400">
+            <div class="text-zinc-400 mb-4">
+                <svg class="w-8 h-8 mx-auto stroke-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+                </svg>
+            </div>
+            <h2 class="text-xs font-bold text-zinc-700 mb-1">Déposez vos frustrations détectées</h2>
+            <p class="text-[11px] text-zinc-400 max-w-xs mb-5 leading-relaxed">
+                Glissez-déposez le fichier <code class="bg-zinc-100 px-1 py-0.5 rounded text-zinc-600 font-mono text-[10px]">detected_frustrations.json</code> ou parcourez votre disque.
+            </p>
+            <input type="file" id="fileInput" accept=".json" class="hidden" onchange="handleFileSelect(event)">
+            <button onclick="document.getElementById('fileInput').click()" class="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-[11px] font-bold transition">
+                Parcourir
+            </button>
+        </div>
+
+        <!-- 2. Dashboard Area -->
+        <div id="dashboardArea" class="hidden flex flex-col space-y-6">
+            
+            <!-- Sleek Metrics Bar (Simple line) -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-6 py-4 border-b border-zinc-200/50" id="statsGrid">
+                <div class="space-y-0.5">
+                    <span class="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Opportunités</span>
+                    <p class="text-xl font-bold text-zinc-900" id="statTotal">0</p>
+                </div>
+                <div class="space-y-0.5 border-l border-zinc-100 pl-6">
+                    <span class="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Micro-SaaS</span>
+                    <p class="text-xl font-semibold text-zinc-700" id="statSaaS">0</p>
+                </div>
+                <div class="space-y-0.5 border-l border-zinc-100 pl-6">
+                    <span class="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Physiques</span>
+                    <p class="text-xl font-semibold text-zinc-700" id="statPhys">0</p>
+                </div>
+                <div class="space-y-0.5 border-l border-zinc-100 pl-6">
+                    <span class="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">Score SOI Max</span>
+                    <p class="text-xl font-bold text-zinc-900" id="statMaxSoi">0</p>
+                </div>
+            </div>
+
+            <!-- Lite Filter Bar -->
+            <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between pb-4 border-b border-zinc-200/50">
+                <div class="flex flex-wrap gap-3 items-center">
+                    
+                    <!-- Category flat selector -->
+                    <div class="flex flex-col gap-1">
+                        <span class="text-[8px] text-zinc-400 uppercase font-bold tracking-widest">Catégorie</span>
+                        <select id="filterCategory" onchange="applyFilters()" class="bg-zinc-100/60 hover:bg-zinc-100/80 text-[11px] font-medium text-zinc-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-zinc-300 transition cursor-pointer appearance-none">
+                            <option value="Tous">Toutes</option>
+                            <option value="Micro-SaaS">Micro-SaaS</option>
+                            <option value="Objet Physique">Objet Physique</option>
+                            <option value="Hybride (HW/SW)">Hybride (HW/SW)</option>
+                        </select>
+                    </div>
+
+                    <!-- SOI flat selector -->
+                    <div class="flex flex-col gap-1">
+                        <span class="text-[8px] text-zinc-400 uppercase font-bold tracking-widest">SOI Min</span>
+                        <input id="filterMinSOI" type="number" min="0" placeholder="0" oninput="applyFilters()" class="bg-zinc-100/60 text-[11px] font-medium text-zinc-700 rounded-lg px-2.5 py-1.5 w-16 text-center focus:outline-none focus:ring-1 focus:ring-zinc-300">
+                    </div>
+
+                    <!-- Sort flat selector -->
+                    <div class="flex flex-col gap-1">
+                        <span class="text-[8px] text-zinc-400 uppercase font-bold tracking-widest">Tri</span>
+                        <select id="sortBy" onchange="applyFilters()" class="bg-zinc-100/60 hover:bg-zinc-100/80 text-[11px] font-medium text-zinc-700 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-zinc-300 transition cursor-pointer appearance-none">
+                            <option value="soi_desc">Score SOI (Max)</option>
+                            <option value="soi_asc">Score SOI (Min)</option>
+                            <option value="date_desc">Récent</option>
+                            <option value="gravity_desc">Gravité</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Text Search minimal -->
+                <div class="flex flex-col gap-1 w-full sm:w-48">
+                    <span class="text-[8px] text-zinc-400 uppercase font-bold tracking-widest">Rechercher</span>
+                    <input id="searchTerm" type="text" placeholder="Rechercher..." oninput="applyFilters()" class="bg-zinc-100/60 text-[11px] text-zinc-700 placeholder-zinc-400 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-zinc-300">
+                </div>
+            </div>
+
+            <!-- Clean & Aired Data Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-zinc-200/60 text-[9px] uppercase text-zinc-400 font-bold tracking-widest">
+                            <th class="py-3 pr-4 font-bold">Problématique</th>
+                            <th class="py-3 px-4 font-bold text-center">Catégorie</th>
+                            <th class="py-3 px-4 font-bold text-center">Score SOI</th>
+                            <th class="py-3 px-2 font-bold text-center">G</th>
+                            <th class="py-3 px-2 font-bold text-center">F</th>
+                            <th class="py-3 px-2 font-bold text-center">R</th>
+                            <th class="py-3 px-2 font-bold text-center">C</th>
+                            <th class="py-3 pl-4 text-right font-bold">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="divide-y divide-zinc-100 text-xs">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="emptyFilteredState" class="hidden text-center py-12 text-zinc-400 text-[11px] font-medium">
+                Aucun résultat ne correspond aux critères de tri.
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Minimalist Detail Drawer (Light Theme) -->
+    <div id="detailDrawer" class="fixed inset-y-0 right-0 w-full max-w-sm bg-white border-l border-zinc-200 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col">
+        <!-- Header -->
+        <div class="p-6 border-b border-zinc-100 flex items-center justify-between">
+            <div>
+                <span id="drawerCategory" class="text-[8px] uppercase font-bold tracking-widest text-zinc-400">MICRO-SAAS</span>
+                <h3 id="drawerTitle" class="text-xs font-bold text-zinc-950 mt-1">Titre de l'opportunité</h3>
+            </div>
+            <button onclick="closeDrawer()" class="p-1 hover:bg-zinc-100 rounded text-zinc-400 hover:text-zinc-600 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Content -->
+        <div class="p-6 flex-grow overflow-y-auto space-y-6">
+            <!-- Context/Synthesis -->
+            <div class="space-y-1.5">
+                <h4 class="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">Contexte &amp; Synthèse</h4>
+                <p id="drawerContext" class="text-[11px] text-zinc-600 leading-relaxed bg-zinc-50 p-3 rounded-lg border border-zinc-100">
+                    Chargement...
+                </p>
+            </div>
+
+            <!-- Reddit Original Quote -->
+            <div class="space-y-1.5">
+                <h4 class="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">Frustration brute</h4>
+                <blockquote id="drawerQuote" class="text-[11px] text-zinc-400 italic bg-zinc-50/40 p-3 rounded-lg border border-zinc-100/50 leading-relaxed max-h-32 overflow-y-auto">
+                    "Citation..."
+                </blockquote>
+            </div>
+
+            <!-- Score Bars (Sleek monochrome minimal) -->
+            <div class="space-y-3.5 pt-1">
+                <h4 class="text-[8px] font-bold text-zinc-400 uppercase tracking-widest">Indicateurs de Friction</h4>
+                
+                <div class="space-y-2.5">
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1">
+                            <span class="text-zinc-500 font-medium">Gravité ($G$)</span>
+                            <span class="font-bold text-zinc-800" id="drawerGravityValue">8/10</span>
+                        </div>
+                        <div class="w-full h-1 bg-zinc-100 rounded-full overflow-hidden">
+                            <div id="drawerGravityBar" class="h-full bg-zinc-800 rounded-full" style="width: 80%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1">
+                            <span class="text-zinc-500 font-medium">Fréquence ($F$)</span>
+                            <span class="font-bold text-zinc-800" id="drawerFrequencyValue">9/10</span>
+                        </div>
+                        <div class="w-full h-1 bg-zinc-100 rounded-full overflow-hidden">
+                            <div id="drawerFrequencyBar" class="h-full bg-zinc-800 rounded-full" style="width: 90%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1">
+                            <span class="text-zinc-500 font-medium">Résolution du MVP ($R$)</span>
+                            <span class="font-bold text-zinc-800" id="drawerResolutionValue">8/10</span>
+                        </div>
+                        <div class="w-full h-1 bg-zinc-100 rounded-full overflow-hidden">
+                            <div id="drawerResolutionBar" class="h-full bg-zinc-800 rounded-full" style="width: 80%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1">
+                            <span class="text-zinc-500 font-medium">Canal cible ($C$)</span>
+                            <span class="font-bold text-zinc-800" id="drawerAccessibilityValue">8/10</span>
+                        </div>
+                        <div class="w-full h-1 bg-zinc-100 rounded-full overflow-hidden">
+                            <div id="drawerAccessibilityBar" class="h-full bg-zinc-800 rounded-full" style="width: 80%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="p-6 border-t border-zinc-100 bg-white flex flex-col gap-3">
+            <div class="flex justify-between items-center bg-zinc-50 p-3 rounded-lg border border-zinc-100">
+                <span class="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">Score SOI</span>
+                <span id="drawerSOI" class="text-base font-extrabold text-zinc-900">194</span>
+            </div>
+            <a id="drawerRedditLink" href="#" target="_blank" class="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-center font-bold text-[11px] transition">
+                Consulter sur Reddit
+            </a>
+        </div>
+    </div>
+
+    <!-- Background overlay for drawer -->
+    <div id="drawerOverlay" onclick="closeDrawer()" class="fixed inset-0 bg-zinc-950/20 backdrop-blur-xs z-40 hidden transition-opacity duration-300"></div>
+
+    <!-- Scripts -->
+    <script>
+        let rawDataset = [];
+        let activePoint = null;
+
+        // Auto load on start if running via a local server (CORS check)
+        window.onload = function() {
+            fetch('detected_frustrations.json')
+                .then(response => {
+                    if (response.ok) return response.json();
+                    throw new Error("Chargement local automatique impossible, en attente d'import manuel.");
+                })
+                .then(data => {
+                    if (Array.isArray(data)) {
+                        initializeDashboard(data, "Synchronisé automatiquement");
+                    }
+                })
+                .catch(err => {
+                    console.log("[Info] " + err.message);
+                });
+            
+            // Drag and drop events setup
+            const zone = document.getElementById('uploadZone');
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('border-zinc-400', 'bg-zinc-50');
+            });
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('border-zinc-400', 'bg-zinc-50');
+            });
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('border-zinc-400', 'bg-zinc-50');
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.endsWith('.json')) {
+                    readFile(file);
+                }
+            });
+        };
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) readFile(file);
+        }
+
+        function readFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const parsedData = JSON.parse(e.target.result);
+                    if (Array.isArray(parsedData)) {
+                        initializeDashboard(parsedData, file.name);
+                    } else {
+                        showBannerError("Le fichier importé doit contenir un tableau JSON d'opportunités.");
+                    }
+                } catch (err) {
+                    showBannerError("Erreur lors de la lecture. Assurez-vous que le fichier JSON est valide.");
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function initializeDashboard(data, sourceName) {
+            rawDataset = data;
+            
+            document.getElementById('uploadZone').classList.add('hidden');
+            document.getElementById('dashboardArea').classList.remove('hidden');
+            document.getElementById('resetBtn').classList.remove('hidden');
+            
+            const indicator = document.getElementById('statusIndicator');
+            indicator.classList.remove('bg-zinc-400');
+            indicator.classList.add('bg-emerald-500');
+            
+            const statusText = document.getElementById('statusText');
+            statusText.innerText = sourceName;
+            
+            document.getElementById('statusBadge').classList.remove('hidden');
+
+            updateStats(data);
+            applyFilters();
+        }
+
+        function updateStats(data) {
+            document.getElementById('statTotal').innerText = data.length;
+            
+            const saasCount = data.filter(p => p.category === 'Micro-SaaS').length;
+            document.getElementById('statSaaS').innerText = saasCount;
+            
+            const physCount = data.filter(p => p.category === 'Objet Physique').length;
+            document.getElementById('statPhys').innerText = physCount;
+            
+            const maxSoi = data.reduce((max, item) => (item.soi > max ? item.soi : max), 0);
+            document.getElementById('statMaxSoi').innerText = maxSoi;
+        }
+
+        function applyFilters() {
+            if (rawDataset.length === 0) return;
+
+            const category = document.getElementById('filterCategory').value;
+            const minSOI = parseInt(document.getElementById('filterMinSOI').value) || 0;
+            const sortBy = document.getElementById('sortBy').value;
+            const searchTerm = document.getElementById('searchTerm').value.toLowerCase();
+
+            let filtered = rawDataset.filter(item => {
+                const matchesCategory = (category === 'Tous' || item.category === category);
+                const matchesSOI = (item.soi >= minSOI);
+                
+                const matchesSearch = !searchTerm || 
+                    item.title.toLowerCase().includes(searchTerm) || 
+                    (item.context && item.context.toLowerCase().includes(searchTerm)) ||
+                    (item.rawQuote && item.rawQuote.toLowerCase().includes(searchTerm)) ||
+                    item.source.toLowerCase().includes(searchTerm);
+
+                return matchesCategory && matchesSOI && matchesSearch;
+            });
+
+            // Sorting logic
+            filtered.sort((a, b) => {
+                if (sortBy === 'soi_desc') return b.soi - a.soi;
+                if (sortBy === 'soi_asc') return a.soi - b.soi;
+                if (sortBy === 'date_desc') return new Date(b.detected_at || 0) - new Date(a.detected_at || 0);
+                if (sortBy === 'gravity_desc') return b.gravity - a.gravity;
+                return 0;
+            });
+
+            renderTable(filtered);
+        }
+
+        function renderTable(list) {
+            const tbody = document.getElementById('tableBody');
+            const emptyState = document.getElementById('emptyFilteredState');
+            tbody.innerHTML = '';
+
+            if (list.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+
+            list.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-zinc-50/70 transition cursor-pointer border-b border-zinc-100";
+                
+                tr.onclick = (e) => {
+                    if (!e.target.closest('a') && !e.target.closest('button')) {
+                        openDrawer(item);
+                    }
+                };
+
+                const catBadgeClass = 'bg-zinc-100 text-zinc-600 border border-zinc-200/40';
+
+                const soiBadgeClass = 
+                    item.soi > 150 ? 'text-zinc-950 font-bold' :
+                    item.soi > 75 ? 'text-zinc-600' :
+                    'text-zinc-400';
+
+                const dateClean = item.detected_at ? item.detected_at.split(' ')[0] : 'N/A';
+
+                tr.innerHTML = `
+                    <td class="py-3.5 pr-4 max-w-xs md:max-w-md">
+                        <div class="font-semibold text-zinc-800 truncate" title="${item.title}">${item.title}</div>
+                        <div class="text-[9px] text-zinc-400 font-medium mt-0.5 truncate">${item.source}</div>
+                    </td>
+                    <td class="py-3.5 px-4 text-center">
+                        <span class="text-[9px] font-semibold px-2 py-0.5 rounded-full ${catBadgeClass}">
+                            ${item.category}
+                        </span>
+                    </td>
+                    <td class="py-3.5 px-4 text-center">
+                        <span class="text-xs ${soiBadgeClass}">
+                            ${item.soi}
+                        </span>
+                    </td>
+                    <td class="py-3.5 px-2 text-center text-zinc-500">${item.gravity}</td>
+                    <td class="py-3.5 px-2 text-center text-zinc-500">${item.frequency}</td>
+                    <td class="py-3.5 px-2 text-center text-zinc-500">${item.resolution}</td>
+                    <td class="py-3.5 px-2 text-center text-zinc-500">${item.accessibility}</td>
+                    <td class="py-3.5 pl-4 text-right text-[9px] text-zinc-400 font-medium">${dateClean}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function openDrawer(item) {
+            activePoint = item;
+
+            document.getElementById('drawerCategory').innerText = item.category;
+            document.getElementById('drawerTitle').innerText = item.title;
+            document.getElementById('drawerContext').innerText = item.context || "Aucune description disponible.";
+            document.getElementById('drawerQuote').innerText = item.rawQuote ? `"${item.rawQuote}"` : "Aucune citation brute disponible.";
+            
+            document.getElementById('drawerGravityValue').innerText = `${item.gravity}/10`;
+            document.getElementById('drawerGravityBar').style.width = `${item.gravity * 10}%`;
+
+            document.getElementById('drawerFrequencyValue').innerText = `${item.frequency}/10`;
+            document.getElementById('drawerFrequencyBar').style.width = `${item.frequency * 10}%`;
+
+            document.getElementById('drawerResolutionValue').innerText = `${item.resolution}/10`;
+            document.getElementById('drawerResolutionBar').style.width = `${item.resolution * 10}%`;
+
+            document.getElementById('drawerAccessibilityValue').innerText = `${item.accessibility}/10`;
+            document.getElementById('drawerAccessibilityBar').style.width = `${item.accessibility * 10}%`;
+
+            document.getElementById('drawerSOI').innerText = item.soi;
+            
+            const linkElement = document.getElementById('drawerRedditLink');
+            if (item.url && item.url !== "#") {
+                linkElement.href = item.url;
+                linkElement.classList.remove('opacity-50', 'pointer-events-none');
+            } else {
+                linkElement.href = "#";
+                linkElement.classList.add('opacity-50', 'pointer-events-none');
+            }
+
+            const drawer = document.getElementById('detailDrawer');
+            const overlay = document.getElementById('drawerOverlay');
+
+            overlay.classList.remove('hidden');
+            setTimeout(() => {
+                drawer.classList.remove('translate-x-full');
+            }, 10);
+        }
+
+        function closeDrawer() {
+            const drawer = document.getElementById('detailDrawer');
+            const overlay = document.getElementById('drawerOverlay');
+
+            drawer.classList.add('translate-x-full');
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 300);
+            activePoint = null;
+        }
+
+        function resetFileSelection() {
+            rawDataset = [];
+            activePoint = null;
+
+            document.getElementById('dashboardArea').classList.add('hidden');
+            document.getElementById('resetBtn').classList.add('hidden');
+            document.getElementById('uploadZone').classList.remove('hidden');
+
+            const indicator = document.getElementById('statusIndicator');
+            indicator.classList.remove('bg-emerald-500');
+            indicator.classList.add('bg-zinc-400');
+            
+            const statusText = document.getElementById('statusText');
+            statusText.innerText = "Lecteur autonome";
+            
+            document.getElementById('statusBadge').classList.add('hidden');
+            document.getElementById('fileInput').value = ''; 
+        }
+
+        function showBannerError(message) {
+            const container = document.querySelector('main');
+            
+            const errorDiv = document.createElement('div');
+            errorDiv.className = "p-3 bg-zinc-50 border border-zinc-200 text-zinc-600 rounded-lg flex items-center justify-between gap-3 text-xs transition-all duration-300 transform translate-y-2 opacity-0 mb-4";
+            errorDiv.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 flex-shrink-0 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span>${message}</span>
+                </div>
+                <button class="text-zinc-400 hover:text-zinc-600" onclick="this.parentElement.remove()">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            `;
+            
+            container.insertBefore(errorDiv, container.firstChild);
+            
+            setTimeout(() => {
+                errorDiv.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    errorDiv.classList.add('translate-y-2', 'opacity-0');
+                    setTimeout(() => errorDiv.remove(), 300);
+                }
+            }, 6000);
+        }
+    </script>
+</body>
+</html>
