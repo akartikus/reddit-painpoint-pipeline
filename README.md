@@ -41,8 +41,8 @@ Le code est conçu de manière modulaire et standardisée (découplée). Le trai
 ## 2. Le Voyage d'une Frustration & Sécurisation des Quotas
 
 Pour éviter de saturer l'API gratuite de Gemini (limite de 15 requêtes/minute), le pipeline implémente un entonnoir de filtrage strict :
-
-[ Étape 1 : Collecte RSS Anonyme ]
+<pre>
+ [ Étape 1 : Collecte RSS Anonyme ]
    Scan temporel via RSS Search sur les subreddits cibles (r/productivity, r/pedale, r/es...).
      │
      ▼
@@ -76,7 +76,8 @@ Pour éviter de saturer l'API gratuite de Gemini (limite de 15 requêtes/minute)
      ▼
  [ Étape 6 : Stockage & Visualisation ]
    Sauvegarde dans "detected_frustrations.json" ──► Visualisable sur PainPoint AI Viewer !
-   
+</pre>
+
 ## 3. Les Formules Mathématiques de Tri
 
 ### A. Algorithme de Friction Local (Pré-filtrage Python)
