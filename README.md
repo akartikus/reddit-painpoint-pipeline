@@ -1,17 +1,17 @@
-# PainPoint AI : Pipeline d'Idéation de Business Automatisé
+# PainPoint AI : Pipeline d'Idéation de Business Automatisé (Quota-Safe & Multilingue)
 
-PainPoint AI est un agent autonome d'écoute et d'étude de marché multilingue. Il scanne les forums publics (via les flux RSS de Reddit), pré-filtre le bruit, analyse sémantiquement les frictions réelles avec l'IA (Google Gemini), calcule un score d'opportunité d'idéation ($SOI$) et exporte des fiches de projets prêtes à l'emploi.
+PainPoint AI est un agent autonome d'écoute et d'étude de marché multilingue (FR/EN/ES). Il scanne les subreddits publics via les flux RSS de recherche de Reddit (sans clé API Reddit), pré-filtre localement le bruit pour économiser vos quotas d'IA, valide sémantiquement les frictions réelles avec Google Gemini, puis calcule un score d'opportunité d'idéation ($SOI$) et exporte des fiches de projets prêtes à l'emploi.
 
 Cette approche permet de concevoir des projets (Micro-SaaS, objets physiques ou produits hybrides) en partant de frustrations réelles, de besoins déjà exprimés par des utilisateurs existants, avec un canal de distribution intégré.
 
-## 1. Architecture du Pipeline (Qui fait quoi ?)
+ ## 1. Architecture Globale du Pipeline
 
-Le code est conçu de manière modulaire et standardisée (découplée). Les sources de données (Scrapers) et les moteurs d'intelligence artificielle (LLM Services) sont isolés derrière des contrats d'interfaces. Vous pouvez ajouter une source ou changer de modèle d'IA en modifiant simplement le fichier config.json.
+Le code est conçu de manière modulaire et standardisée (découplée). Le traitement intègre un double rempart pour protéger vos quotas d'appels API Gemini et garantir un coût de fonctionnement de 0 €.
 
        +-------------------------------------------------------+
        |                     config.json                       |
        +-------------------------------------------------------+
-                                   | (Configure)
+                                   | (Configure le pipeline & quotas)
                                    v
                       +--------------------------+
                       |    PipelineController    | <---+ (Chef d'orchestre)
@@ -28,7 +28,7 @@ Le code est conçu de manière modulaire et standardisée (découplée). Les sou
       | RedditRSSScraper |                    | GeminiLLMService | (Classes concrètes)
       +------------------+                    +------------------+
                |                                       |
-               | (Génère du texte brut)                | (Valide & Traduit)
+               | (Analyse RSS historique)              | (Gère Rate-Limit & Erreur 429)
                v                                       v
          [ Post Brut ]                         +---------------------+
                |                               | FrustrationAnalysis | (Schéma de sortie strict)
@@ -38,71 +38,117 @@ Le code est conçu de manière modulaire et standardisée (découplée). Les sou
        |               detected_frustrations.json              | (Base de données unifiée)
        +-------------------------------------------------------+
 
+## 2. Le Voyage d'une Frustration & Sécurisation des Quotas
 
-### Rôle des composants clés :
+Pour éviter de saturer l'API gratuite de Gemini (limite de 15 requêtes/minute), le pipeline implémente un entonnoir de filtrage strict :
 
-PipelineController : Le chef d'orchestre. Il initialise les modules, gère l'historique pour éviter les doublons, calcule le score final et écrit le fichier de sortie.
 
-BaseScraper : Interface standard de collecte. N'importe quel nouveau collecteur (ex: Amazon Reviews, Quora) doit l'implémenter.
-
-RedditRSSScraper : Collecteur sans clé API. Il interroge anonymement les flux RSS publics des subreddits configurés et contourne proprement les barrières d'accès développeur de Reddit.
-
-BaseLLMService : Interface standard d'analyse sémantique.
-
-GeminiLLMService : Intègre l'API Gemini (gratuite en deçà de 15 requêtes/minute) pour lire, filtrer le bruit, catégoriser, et traduire systématiquement en français les problèmes détectés.
-
-## 2. Le Voyage d'une Frustration (Flux de données)
-
-Voici le cycle complet suivi par une plainte utilisateur sur Reddit avant d'atterrir sur votre Dashboard :
-
- [ Étape 1 : Collecte Anonyme ]
-   Reddit RSS public (r/productivity, r/bikecommuting...)
+ [ Étape 1 : Collecte RSS Anonyme ]
+   Scan temporel via RSS Search sur les subreddits cibles (r/productivity, r/pedale, r/es...).
      │
      ▼
- [ Étape 2 : Pré-filtrage rapide ]
-   Recherche de mots-clés de friction dans le titre et le contenu :
-   "alternative à", "galère", "manually", "hate doing this", "molesto"...
+ [ Étape 2 : Pré-filtrage Local (0 token IA utilisé) ] ◄── ÉCONOMISE ~85% DES APPELS API
+   Algorithme local de calcul de friction (poids sur les mots-clés, longueur minimale, etc.).
+   Le post dépasse-t-il le score local requis (ex: 25 pts) ?
      │
-     ├── [ Non trouvé ] ──► Ignoré (Gratuit, économise les tokens de l'IA)
+     ├── [ NON ] ──► Ignoré localement de façon instantanée et gratuite.
      │
-     └── [ Trouvé ]
+     └── [ OUI ]
            │
            ▼
- [ Étape 3 : Analyse sémantique par l'IA (Gemini-2.5-flash) ]
-   L'IA évalue s'il s'agit d'une vraie frustration exploitable pour créer un produit.
-     │
-     ├── [is_valid_pain = False] ──► Rejeté (C'est un mème, de l'auto-promo ou du spam)
-     │
-     └── [is_valid_pain = True]
-           │
-           ▼ (Traduction forcée et synthèse des données en français)
-           │
- [ Étape 4 : Calcul du Score d'Opportunité d'Idéation (SOI) ]
-   Calcul mathématique automatique basé sur 4 curseurs (évalués de 1 à 10 par l'IA)
+ [ Étape 3 : Régulation Temporelle Strict (Throttling) ] ◄── SÉCURITÉ DE DÉBIT
+   Le script applique une temporisation stricte (ex: 5.0s d'attente) entre chaque requête.
      │
      ▼
- [ Étape 5 : Filtrage par Seuil & Archivage ]
-   Si SOI >= Seuil configuré (ex: 75) ──► Enregistré dans "detected_frustrations.json"
+ [ Étape 4 : Analyse sémantique par l'IA (Gemini-2.5-flash) ]
+   Validation stricte de faisabilité technique/matérielle pour un solopreneur.
+     │
+     ├── [ Erreur 429 / Quota dépassé ] ──► Backoff exponentiel (pause & réessai intelligent).
+     │
+     ├── [ is_valid_pain = False ] ──► Rejeté (C'est un mème, une question théorique, du spam).
+     │
+     └── [ is_valid_pain = True ]
+           │
+           ▼ (Traduction forcée en français, synthèse & génération de MVP)
+           │
+ [ Étape 5 : Calcul du Score d'Opportunité d'Idéation (SOI) ]
+   Calcul mathématique automatique. Passage au crible du seuil de filtrage final (ex: SOI >= 75).
      │
      ▼
- [ Étape 6 : Visualisation ]
-   Prêt à être affiché dans votre Dashboard React pour concevoir votre MVP !
+ [ Étape 6 : Stockage & Visualisation ]
+   Sauvegarde dans "detected_frustrations.json" ──► Visualisable sur PainPoint AI Viewer !
 
+## 3. Les Formules Mathématiques de Tri
 
-## 3. La Formule Mathématique : Score SOI
+### A. Algorithme de Friction Local (Pré-filtrage Python)
 
-Chaque frustration détectée est évaluée selon quatre variables notées de $1$ à $10$ :
+Avant d'interroger Gemini, le script attribue des points à la volée aux textes bruts :
+
+Mots-clés de forte friction (ex: manually, hate doing this, galère, comment automatiser) : de $+10$ à $+25$ points.
+
+Pénalité de longueur : Les textes de moins de 15 mots subissent une pénalité de $-15$ points (manque de contexte pour l'IA).
+
+Bonus argumentatif : $+5$ points pour les posts constructifs (entre 30 et 250 mots).
+
+### B. Le Score d'Opportunité d'Idéation ($SOI$)
+
+Une fois validée par Gemini, l'opportunité est notée de $1$ à $10$ sur 4 variables par l'IA :
 
 Gravité ($G$) : Intensité de la douleur (ex: perte d'argent = $10$, simple clic superflu = $2$).
 
-Fréquence ($F$) : Récurrence de la frustration (ex: quotidiennement = $10$, une fois par an = $1$).
+Fréquence ($F$) : Récurrence de la frustration (ex: quotidiennement = $10$, annuel = $1$).
 
-Facilité de Résolution ($R$) : Simplicité technique pour concevoir un MVP (ex: facile à coder/fabriquer = $10$, recherche lourde = $1$).
+Facilité de Résolution ($R$) : Simplicité technique à concevoir un MVP (facile à faire = $10$, R&D complexe = $1$).
 
-Accessibilité du Canal ($C$) : Facilité à distribuer la solution dans cette communauté (ex: sous-forum hyper actif et ouvert = $10$).
+Accessibilité du Canal ($C$) : Facilité de distribution organique dans le subreddit (très ouvert = $10$).
 
-Le Score d'Opportunité d'Idéation ($SOI$) est calculé de la manière suivante :
+Le score final est déterminé par la formule :
 
 $$SOI = \frac{G \times F \times C}{11 - R}$$
 
-Plus le score $SOI$ est élevé (généralement $> 80$), plus le projet résout un problème douloureux, récurrent, facile à concevoir et à distribuer de façon organique.
+Plus le score $SOI$ est élevé (généralement $> 75$), plus le projet résout un problème douloureux, récurrent, facile à concevoir et à distribuer.
+
+## 4. Personnalisation et Configuration (config.json)
+
+Vous pouvez piloter tout le comportement de l'agent sans modifier le code de calcul via config.json :
+
+{
+  "subreddits": ["productivity", "pedale", "es"],
+  "trigger_keywords": ["alternative to", "manuellement", "molesto"],
+  "min_soi_threshold": 75,
+  "optimization": {
+    "max_queries_per_minute": 12,
+    "delay_between_queries_seconds": 5.0,
+    "local_prefilter_score_threshold": 25,
+    "gemini_retry_attempts": 3,
+    "gemini_retry_delay_seconds": 10
+  }
+}
+
+
+delay_between_queries_seconds : Temps d'attente forcé entre chaque appel à l'IA (en secondes).
+
+local_prefilter_score_threshold : Seuil minimal de points au pré-filtrage Python pour mériter un appel Gemini.
+
+gemini_retry_attempts : Nombre d'essais en cas d'erreur de quota (HTTP 429).
+
+gemini_retry_delay_seconds : Pause initiale de sécurité avant réessai (doublée à chaque échec).
+
+ ## 5. Installation Rapide
+
+Installez les paquets requis :
+
+pip install google-genai python-dotenv requests feedparser
+
+
+Créez votre fichier .env :
+
+GEMINI_API_KEY=votre_cle_gemini_gratuite
+
+
+Exécutez l'agent autonome :
+
+python pipeline.py
+
+
+Ouvrez viewer.html et déposez-y votre fichier detected_frustrations.json mis à jour pour analyser graphiquement vos nouvelles idées d'affaires !
