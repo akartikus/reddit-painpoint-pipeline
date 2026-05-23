@@ -2,11 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Pipeline d'Idéation RSS Standardisé et Évolutif (Sans API Reddit)
+Pipeline de détection de Frustrations Reddit Multilingue (EN/FR/ES)
 ------------------------------------------------------------------
-Ce script utilise les flux RSS publics de Reddit. Il ne nécessite aucun
-compte développeur Reddit, aucune clé API Reddit et contourne la politique
-"Responsible Builder Policy" de manière totalement transparente.
+Rôle: Scraper Reddit, pré-filtrer localement sans API, réguler les appels
+      Gemini, gérer les quotas (429) et stocker les opportunités validées.
 """
 
 import os
@@ -14,301 +13,362 @@ import json
 import time
 import re
 from datetime import datetime
-from abc import ABC, abstractmethod
-from typing import Literal, Optional, List
 from dotenv import load_dotenv
 import requests
 import feedparser
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
 
-# Charger la variable confidentielle du fichier .env
+# Charger les variables d'environnement (.env)
 load_dotenv()
 
 # =====================================================================
-# MODÈLE DE DONNÉES ET INTERFACES (CONTRATS DE STANDARDISATION)
+# INITIALISATION DES SERVICES
 # =====================================================================
 
-class FrustrationAnalysis(BaseModel):
-    """Schéma de validation strict pour l'IA (Structured Output)."""
-    is_valid_pain: bool = Field(
-        description="True si le texte exprime une frustration exploitable, réaliste et techniquement/matériellement faisable à résoudre pour un créateur indépendant. False sinon."
-    )
-    title_fr: str = Field(
-        description="Titre du problème traduit ou rédigé de manière concise en français."
-    )
-    category: Literal["Micro-SaaS", "Objet Physique", "Hybride (HW/SW)"] = Field(
-        description="Type de solution le plus adapté au problème."
-    )
-    gravity: int = Field(
-        description="Note de 1 à 10 de la douleur ou de la perte générée."
-    )
-    frequency: int = Field(
-        description="Note de 1 à 10 de la récurrence du problème."
-    )
-    resolution_ease: int = Field(
-        description="Note de 1 à 10 décrivant la facilité à concevoir un MVP."
-    )
-    accessibility: int = Field(
-        description="Note de 1 à 10 décrivant la facilité à distribuer la solution dans ce canal."
-    )
-    summary_fr: str = Field(
-        description="Description détaillée de la frustration rédigée en français."
-    )
-    proposed_solution_fr: str = Field(
-        description="Une idée de début de solution (MVP) concrète, réaliste et techniquement/matériellement faisable à bas coût par un solopreneur (ex: extension Chrome, pièce imprimée en 3D, script d'automatisation)."
-    )
-    target_persona: str = Field(
-        description="Profil type de l'utilisateur souffrant du problème (en français)."
-    )
+required_env_vars = ["GEMINI_API_KEY"]
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
 
+if missing_vars:
+    raise ValueError(f"Variable d'environnement manquante dans le fichier .env : {', '.join(missing_vars)}")
 
-class BaseScraper(ABC):
-    """Interface standard pour toutes les sources de données."""
-    
-    @abstractmethod
-    def fetch_recent_posts(self, config: dict) -> List[dict]:
-        """Doit retourner une liste de dictionnaires standardisés."""
-        pass
+# Initialisation du client Google GenAI
+ai_client = genai.Client()
 
-
-class BaseLLMService(ABC):
-    """Interface standard pour les services d'IA."""
-    
-    @abstractmethod
-    def evaluate_frustration(self, title: str, content: str, source: str) -> Optional[dict]:
-        """Doit analyser le texte et renvoyer une fiche d'opportunité unifiée ou None."""
-        pass
+# Headers de navigateur pour contourner poliment les restrictions des flux RSS
+RSS_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
 
 # =====================================================================
-# IMPLÉMENTATION DES SOURCES : SCRAPER RSS REDDIT (SANS API REDDIT !)
+# GESTION DES CONFIGURATIONS ET FICHIERS
 # =====================================================================
 
-class RedditRSSScraper(BaseScraper):
-    """Scraper standard utilisant les flux de recherche RSS publics (historique et pertinence)."""
-    
-    def __init__(self):
-        # Utiliser un User-Agent de navigateur classique pour éviter les blocages de sécurité
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+def load_config():
+    """Charge les subreddits, mots-clés et limites d'optimisation depuis config.json."""
+    if os.path.exists("config.json"):
+        with open("config.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "subreddits": ["productivity", "france"],
+        "trigger_keywords": ["alternative", "manuellement", "marre"],
+        "min_soi_threshold": 75,
+        "optimization": {
+          "max_queries_per_minute": 12,
+          "delay_between_queries_seconds": 5.0,
+          "local_prefilter_score_threshold": 25,
+          "gemini_retry_attempts": 3,
+          "gemini_retry_delay_seconds": 10
         }
-        
-    def _clean_html(self, raw_html: str) -> str:
-        """Supprime les balises HTML contenues dans les résumés des flux RSS."""
-        cleanr = re.compile('<.*?>')
-        text = re.sub(cleanr, ' ', raw_html)
-        text = re.sub(r'submitted by.*?\s', '', text)
-        return " ".join(text.split())
-        
-    def fetch_recent_posts(self, config: dict) -> List[dict]:
-        raw_items = []
-        subreddits = config.get("subreddits", [])
-        keywords = config.get("trigger_keywords", [])
-        
-        for sub_name in subreddits:
-            # Pour chaque subreddit, on pioche dans l'historique en recherchant directement les mots-clés
-            # Nous trions par 'relevance' sur l'année écoulée pour avoir les meilleurs posts historiques
-            for kw in keywords[:5]: # On limite aux 5 premiers mots-clés par passe pour ne pas saturer Reddit
-                try:
-                    query = requests.utils.quote(kw)
-                    url = f"https://www.reddit.com/r/{sub_name}/search.rss?q={query}&restrict_sr=1&sort=relevance&t=year"
-                    response = requests.get(url, headers=self.headers, timeout=10)
-                    
-                    if response.status_code == 200:
-                        feed = feedparser.parse(response.text)
-                        print(f"[Scraper] Recherche r/{sub_name} pour '{kw}' ({len(feed.entries)} posts trouvés)")
-                        
-                        for entry in feed.entries:
-                            content_clean = self._clean_html(entry.get("summary", ""))
-                            post_id = entry.link.split("/")[-3] if "comments" in entry.link else entry.id
-                            
-                            raw_items.append({
-                                "id": f"reddit-{post_id}",
-                                "raw_id": post_id,
-                                "title": entry.title,
-                                "content": content_clean,
-                                "platform": "Reddit (RSS Search)",
-                                "source_community": f"r/{sub_name}",
-                                "url": entry.link
-                            })
-                    time.sleep(1.0) # Temporisation polie entre requêtes de mots-clés
-                except Exception as e:
-                    print(f"[Scraper] Erreur de recherche sur r/{sub_name} avec le mot-clé '{kw}' : {e}")
-                    
-            # Temporisation polie entre subreddits
-            time.sleep(2.0)
-                
-        return raw_items
+    }
 
-# =====================================================================
-# IMPLÉMENTATION DES LLM : SERVICE GOOGLE GEMINI
-# =====================================================================
-
-class GeminiLLMService(BaseLLMService):
-    """Implémentation standard utilisant l'API Gemini."""
-    
-    def __init__(self, model_name: str):
-        self.client = genai.Client()
-        self.model_name = model_name
-        
-    def evaluate_frustration(self, title: str, content: str, source: str) -> Optional[dict]:
-        system_instruction = (
-            "Tu es un agent d'étude de marché d'élite spécialisé dans le filtrage d'opportunités de business.\n\n"
-            "CRITÈRE DE FAISABILITÉ CRUCIAL :\n"
-            "Tu dois impérativement REJETER (is_valid_pain = false) les problèmes qui sont :\n"
-            "1. Techniquement insolubles (ex: violer les lois de la physique, batteries magiques).\n"
-            "2. Matériellement hors de portée d'un solopreneur ou d'un petit budget (ex: nécessite de lourdes infrastructures physiques, des autorisations gouvernementales, ou de modifier des systèmes d'exploitation verrouillés).\n"
-            "3. De simples expressions de colère passagère sans besoin de produit.\n"
-            "Ne garde que les problèmes réels pour lesquels un produit simple (logiciel, accessoire, outil) peut être développé par une petite équipe.\n\n"
-            "DIRECTIVE DE TRADUCTION & SOLUTION :\n"
-            "Rédige impérativement les champs 'title_fr', 'summary_fr' et 'proposed_solution_fr' en FRANÇAIS.\n"
-            "Dans 'proposed_solution_fr', propose un début de solution concret, réaliste et ingénieux."
-        )
-        
-        prompt = f"""
-        Source / Communauté d'origine : {source}
-        Titre d'origine : {title}
-        Contenu d'origine : {content}
-        """
-        
+def load_database():
+    """Charge l'historique des frustrations détectées."""
+    db_file = "detected_frustrations.json"
+    if os.path.exists(db_file):
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
+            with open(db_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print("[!] Base de données corrompue. Réinitialisation...")
+            return []
+    return []
+
+def save_database(data):
+    """Sauvegarde la base de données mise à jour."""
+    with open("detected_frustrations.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+# =====================================================================
+# ALGORITHME DE PRÉ-FILTRAGE LOCAL (ZÉRO APPEL API)
+# =====================================================================
+
+def calculate_local_frustration_score(title, content):
+    """
+    Analyse le post localement et lui attribue une note de friction.
+    Évite d'envoyer à Gemini des posts qui n'expriment pas de réelle frustration.
+    """
+    score = 0
+    text_lower = f"{title} {content}".lower()
+    
+    # Matrice de poids pour cibler la forte intention de friction
+    keyword_weights = {
+        # Anglais (Poids fort à modéré)
+        "alternative to": 15, "why is there no": 15, "is there an app": 10,
+        "manually": 20, "hate doing this": 25, "annoying": 15, "workaround": 15,
+        "waste of time": 20, "how to automate": 15, "frustrated": 15,
+        # Français (Poids fort à modéré)
+        "alternative à": 15, "pourquoi personne": 15, "existe-t-il une": 10,
+        "manuellement": 20, "marre de": 25, "chiant": 15, "galère": 15,
+        "perte de temps": 20, "comment automatiser": 15, "frustré": 15,
+        # Espagnol (Poids fort à modéré)
+        "alternativa a": 15, "por qué nadie": 15, "existe alguna": 10,
+        "manualmente": 20, "harto de": 25, "molesto": 15, "truco para": 15,
+        "pérdida de tiempo": 20, "cómo automatizar": 15, "frustrado": 15
+    }
+    
+    # Évaluation de la présence des mots-clés
+    for kw, weight in keyword_weights.items():
+        if kw in text_lower:
+            score += weight
+            
+    # Pénalité ou bonus sur la longueur (les textes trop courts manquent de contexte pour l'IA)
+    word_count = len(text_lower.split())
+    if word_count < 15:
+        score -= 15  # Pénalise fortement les posts d'une phrase
+    elif 30 <= word_count <= 250:
+        score += 5   # Bonus pour les posts bien argumentés
+        
+    return score
+
+# =====================================================================
+# EVALUATION SÉMANTIQUE PAR IA AVEC BACKOFF ET LIMITATION
+# =====================================================================
+
+def calculate_soi(gravity, frequency, resolution, accessibility):
+    """Calcule le Score d'Opportunité d'Idéation (SOI)."""
+    divisor = 11 - resolution
+    if divisor <= 0:
+        divisor = 1
+    return round((gravity * frequency * accessibility) / divisor)
+
+def evaluate_post_with_ai_retry(title, content, subreddit, url, opt_config):
+    """
+    Appelle l'API Gemini avec gestion robuste des erreurs de quota (429)
+    et mécanisme de repli (backoff temporel exponentiel).
+    """
+    system_prompt = (
+        "Tu es un agent d'étude de marché d'élite. Ton but est d'analyser un post Reddit "
+        "(en anglais, espagnol ou français) et de déterminer s'il exprime une véritable frustration "
+        "exploitable pour un créateur indépendant afin de lancer un produit (SaaS, physique, hybride).\n\n"
+        "DIRECTIVES EXTRÊMEMENT STRICTES DE FAISABILITÉ :\n"
+        "Tu dois IMPÉRATIVEMENT rejeter (is_valid_pain = false) les problèmes qui sont :\n"
+        "1. Insolubles techniquement (ex: enfreindre les lois de la physique, batteries infinies).\n"
+        "2. Matériellement hors de portée d'un solopreneur (ex: nécessite de lourdes infrastructures physiques, "
+        "des modifications de systèmes d'exploitation verrouillés, ou des autorisations réglementaires lourdes).\n"
+        "3. De simples expressions de colère passagère ou des questions génériques.\n\n"
+        "Si le problème est valide, génère obligatoirement le titre ('title_fr'), le résumé ('summary_fr') "
+        "et l'idée de solution MVP ('proposed_solution_fr') en FRANÇAIS. L'idée de solution doit être réaliste, "
+        "concrète, ingénieuse et réalisable à bas coût."
+    )
+
+    prompt = f"""
+    Analyse ce post issu du subreddit r/{subreddit} (Langue d'origine possible : EN, ES, FR) :
+    Titre original : {title}
+    Contenu original : {content}
+    URL : {url}
+    """
+
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "is_valid_pain": {
+                "type": "BOOLEAN",
+                "description": "True si le problème est réel, exploitable et techniquement/matériellement simple à résoudre pour un créateur seul."
+            },
+            "title_fr": {
+                "type": "STRING",
+                "description": "Titre synthétique du problème rédigé en français."
+            },
+            "category": {
+                "type": "STRING",
+                "enum": ["Micro-SaaS", "Objet Physique", "Hybride (HW/SW)"],
+                "description": "Catégorie la plus adaptée pour la solution."
+            },
+            "gravity": {
+                "type": "INTEGER",
+                "description": "Note de 1 à 10 de la douleur engendrée."
+            },
+            "frequency": {
+                "type": "INTEGER",
+                "description": "Note de 1 à 10 de la récurrence du problème."
+            },
+            "resolution_ease": {
+                "type": "INTEGER",
+                "description": "Note de 1 à 10 de la facilité à concevoir un MVP simple."
+            },
+            "accessibility": {
+                "type": "INTEGER",
+                "description": "Note de 1 à 10 de la facilité à distribuer le produit dans ce canal."
+            },
+            "summary_fr": {
+                "type": "STRING",
+                "description": "Résumé et contexte de la frustration rédigé en français."
+            },
+            "proposed_solution_fr": {
+                "type": "STRING",
+                "description": "Proposition concrète et simple d'une solution MVP faisable rapidement et à bas coût (ex: extension Chrome, script, pièce 3D simple, modèle Notion)."
+            },
+            "target_persona": {
+                "type": "STRING",
+                "description": "Qui souffre de ce problème (en français)."
+            }
+        },
+        "required": [
+            "is_valid_pain", "title_fr", "category", "gravity", 
+            "frequency", "resolution_ease", "accessibility", "summary_fr", "proposed_solution_fr", "target_persona"
+        ]
+    }
+
+    attempts = opt_config.get("gemini_retry_attempts", 3)
+    current_delay = opt_config.get("gemini_retry_delay_seconds", 10)
+
+    for attempt in range(attempts):
+        try:
+            # Appel API Gemini 2.5 Flash
+            response = ai_client.models.generate_content(
+                model="gemini-2.5-flash",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
+                    system_instruction=system_prompt,
                     response_mime_type="application/json",
-                    response_schema=FrustrationAnalysis,
+                    response_schema=response_schema,
                     temperature=0.1
                 )
             )
-            return json.loads(response.text)
-        except Exception as e:
-            print(f"[LLM] Erreur d'analyse sémantique : {e}")
+            
+            result = json.loads(response.text)
+            
+            if result.get("is_valid_pain"):
+                result["soi"] = calculate_soi(
+                    result["gravity"],
+                    result["frequency"],
+                    result["resolution_ease"],
+                    result["accessibility"]
+                )
+                return result
             return None
 
-# =====================================================================
-# LE CONTROLEUR PRINCIPAL DU PIPELINE (ORCHESTRATEUR)
-# =====================================================================
-
-class PipelineController:
-    """Orchestre la collecte RSS, l'évaluation IA et l'archivage."""
+        except Exception as e:
+            # Si nous rencontrons une erreur de limite (Code HTTP 429 ou quota)
+            print(f"[IA] Quota ou erreur API rencontrée (Tentative {attempt+1}/{attempts}) : {e}")
+            if attempt < attempts - 1:
+                print(f"[IA] Pause de sécurité et réessai dans {current_delay} secondes...")
+                time.sleep(current_delay)
+                current_delay *= 2  # Doublement du temps d'attente (Backoff exponentiel)
+            else:
+                print("[!] Limite maximale de tentatives atteinte. Saut de ce post.")
     
-    def __init__(self, config_path: str = "config.json"):
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = json.load(f)
-            
-        self.db_path = "detected_frustrations.json"
-        self.database = self.load_database()
+    return None
+
+# =====================================================================
+# CORE PIPELINE RUNNER
+# =====================================================================
+
+def clean_html(raw_html):
+    """Supprime les balises HTML contenues dans les flux RSS."""
+    cleanr = re.compile('<.*?>')
+    text = re.sub(cleanr, ' ', raw_html)
+    text = re.sub(r'submitted by.*?\s', '', text)
+    return " ".join(text.split())
+
+def run_pipeline():
+    config = load_config()
+    database = load_database()
+    opt = config.get("optimization", {})
+    
+    known_ids = {item["id"] for item in database}
+    new_discoveries = 0
+    
+    # Paramètres d'optimisation
+    local_threshold = opt.get("local_prefilter_score_threshold", 25)
+    query_delay = opt.get("delay_between_queries_seconds", 5.0)
+    
+    print("=" * 70)
+    print(f"LANCEMENT DU PIPELINE OPTIMISÉ (QUOTA SAFE) : {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print("=" * 70)
+    print(f"[+] Seuil local d'exclusion pré-API : {local_threshold} pts")
+    print(f"[+] Temporisation stricte entre requêtes : {query_delay} secondes")
+    
+    for sub_name in config["subreddits"]:
+        print(f"\n[Scraper] Analyse de r/{sub_name}...")
         
-        llm_provider = self.config.get("active_llm_provider", "gemini")
-        model_name = self.config.get("active_llm_model", "gemini-2.5-flash")
-        
-        if llm_provider == "gemini":
-            self.llm_service = GeminiLLMService(model_name)
-        else:
-            raise ValueError(f"Le fournisseur d'IA '{llm_provider}' n'est pas encore configuré.")
-            
-    def load_database(self) -> list:
-        if os.path.exists(self.db_path):
+        # Nous interrogeons le flux RSS de recherche historique du subreddit
+        # pour obtenir des posts hautement pertinents sur l'année écoulée
+        for kw in config["trigger_keywords"][:4]: # Limite aux 4 premiers mots-clés par subreddit pour économiser le trafic
             try:
-                with open(self.db_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except json.JSONDecodeError:
-                return []
-        return []
-        
-    def save_database(self):
-        with open(self.db_path, "w", encoding="utf-8") as f:
-            json.dump(self.database, f, indent=2, ensure_ascii=False)
-            
-    def calculate_soi(self, gravity, frequency, resolution, accessibility):
-        """Calcul du Score SOI (Score d'Opportunité d'Idéation)."""
-        divisor = 11 - resolution
-        if divisor <= 0:
-            divisor = 1
-        return round((gravity * frequency * accessibility) / divisor)
-
-    def run(self):
-        print("=" * 70)
-        print(f"Lancement du pipeline RSS : {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        print("=" * 70)
-        
-        known_ids = {item["id"] for item in self.database}
-        new_discoveries = 0
-        
-        if "reddit_rss" in self.config["sources"]:
-            print("[Pipeline] Initialisation du collecteur RSS Reddit...")
-            scraper = RedditRSSScraper()
-            rss_config = self.config["sources"]["reddit_rss"]
-            
-            print("[Pipeline] Collecte en cours sur les flux RSS publics...")
-            raw_posts = scraper.fetch_recent_posts(rss_config)
-            print(f"[Pipeline] {len(raw_posts)} posts pré-sélectionnés pour l'analyse IA.")
-            
-            for post in raw_posts:
-                if post["id"] in known_ids:
-                    continue
+                query = requests.utils.quote(kw)
+                url = f"https://www.reddit.com/r/{sub_name}/search.rss?q={query}&restrict_sr=1&sort=relevance&t=year"
+                response = requests.get(url, headers=RSS_HEADERS, timeout=10)
                 
-                print(f"\n  └─ Évaluation de '{post['title'][:40]}...' ({post['source_community']})")
-                
-                # Respecter le quota gratuit Gemini (15 req/min max = ~4.5s de pause)
-                time.sleep(4.5)
-                
-                analysis = self.llm_service.evaluate_frustration(
-                    title=post["title"],
-                    content=post["content"],
-                    source=post["source_community"]
-                )
-                
-                if analysis and analysis.get("is_valid_pain"):
-                    soi_score = self.calculate_soi(
-                        analysis["gravity"],
-                        analysis["frequency"],
-                        analysis["resolution_ease"],
-                        analysis["accessibility"]
-                    )
+                if response.status_code == 200:
+                    feed = feedparser.parse(response.text)
                     
-                    if soi_score >= self.config["min_soi_threshold"]:
-                        print(f"     ⭐ IDÉATION VALIDÉE ! [SOI: {soi_score}] - {analysis['title_fr']}")
+                    for entry in feed.entries:
+                        post_id = entry.link.split("/")[-3] if "comments" in entry.link else entry.id
+                        if post_id in known_ids:
+                            continue
                         
-                        validated_opportunity = {
-                            "id": post["id"],
-                            "title": analysis["title_fr"],
-                            "source": f"{post['platform']} - {post['source_community']}",
-                            "rawQuote": post["content"][:300] + ("..." if len(post["content"]) > 300 else ""),
-                            "category": analysis["category"],
-                            "gravity": analysis["gravity"],
-                            "frequency": analysis["frequency"],
-                            "resolution": analysis["resolution_ease"],
-                            "accessibility": analysis["accessibility"],
-                            "soi": soi_score,
-                            "context": analysis["summary_fr"],
-                            "proposedSolution": analysis["proposed_solution_fr"], # Nouveau champ
-                            "targetCommunity": post["source_community"],
-                            "url": post["url"],
-                            "detected_at": datetime.now().strftime('%Y-%m-%d %H:%M')
-                        }
+                        clean_content = clean_html(entry.get("summary", ""))
                         
-                        self.database.append(validated_opportunity)
-                        known_ids.add(post["id"])
-                        new_discoveries += 1
+                        # --- ÉTAPE OPTIMISATION 1 : CALCUL DU SCORE LOCAL ---
+                        local_score = calculate_local_frustration_score(entry.title, clean_content)
                         
-                        # Sauvegarde immédiate
-                        self.save_database()
-                    else:
-                        print(f"     [-] Filtré : Score SOI ({soi_score}) inférieur au seuil.")
-                else:
-                    print("     [-] Filtré : Pas d'opportunité identifiée.")
-                    
-        print("\n" + "=" * 70)
-        print(f"[Bilan] Fin d'exécution.")
-        print(f"[+] Nouvelles opportunités importées : {new_discoveries}")
-        print(f"[+] Total d'opportunités en base : {len(self.database)}")
-        print("=" * 70)
-
+                        if local_score < local_threshold:
+                            # Le post n'exprime pas assez de friction ou est trop court :
+                            # On passe au suivant SANS appeler l'API de Gemini (Économie de Quota)
+                            continue
+                        
+                        print(f"  └─ 🔥 Match Fort Local [Score: {local_score} pts] : '{entry.title[:45]}...'")
+                        print("     [IA] Évaluation sémantique et génération de solution...")
+                        
+                        # --- ÉTAPE OPTIMISATION 2 : TEMPORISATION SÉCURISÉE ---
+                        time.sleep(query_delay)
+                        
+                        analysis = evaluate_post_with_ai_retry(
+                            title=entry.title,
+                            content=clean_content,
+                            subreddit=sub_name,
+                            url=entry.link,
+                            opt_config=opt
+                        )
+                        
+                        if analysis:
+                            soi_score = analysis.get("soi", 0)
+                            if soi_score >= config["min_soi_threshold"]:
+                                print(f"     ⭐ IDÉE VALIDÉE ! [SOI: {soi_score}] -> {analysis['title_fr']}")
+                                
+                                validated_opportunity = {
+                                    "id": post_id,
+                                    "title": analysis["title_fr"],
+                                    "source": f"Reddit - r/{sub_name}",
+                                    "rawQuote": clean_content[:300] + ("..." if len(clean_content) > 300 else ""),
+                                    "category": analysis["category"],
+                                    "gravity": analysis["gravity"],
+                                    "frequency": analysis["frequency"],
+                                    "resolution": analysis["resolution_ease"],
+                                    "accessibility": analysis["accessibility"],
+                                    "soi": soi_score,
+                                    "context": analysis["summary_fr"],
+                                    "proposedSolution": analysis["proposed_solution_fr"],
+                                    "targetCommunity": f"r/{sub_name}",
+                                    "url": entry.link,
+                                    "detected_at": datetime.now().strftime('%Y-%m-%d %H:%M')
+                                }
+                                
+                                database.append(validated_opportunity)
+                                known_ids.add(post_id)
+                                new_discoveries += 1
+                                
+                                # Sauvegarde incrémentale
+                                save_database(database)
+                            else:
+                                print(f"     [-] Filtré : Score SOI ({soi_score}) insuffisant.")
+                        else:
+                            print("     [-] Filtré : Rejeté par l'IA (Bruit ou non réalisable).")
+                
+                # Petite pause polie entre chaque requête de flux RSS
+                time.sleep(1.5)
+                
+            except Exception as e:
+                print(f"[!] Erreur de scraping RSS sur r/{sub_name} avec le mot-clé '{kw}' : {e}")
+                continue
+                
+    print("\n" + "=" * 70)
+    print("BILAN DE L'EXÉCUTION OPTIMISÉE")
+    print(f"[+] Nouvelles opportunités validées et importées : {new_discoveries}")
+    print(f"[+] Total d'opportunités en base : {len(database)}")
+    print("=" * 70)
 
 if __name__ == "__main__":
-    controller = PipelineController()
-    controller.run()
+    run_pipeline()
